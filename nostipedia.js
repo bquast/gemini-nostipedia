@@ -4,6 +4,7 @@
  * Handles connections to Nostr relays, fetching articles,
  * and rendering content on the page.
  */
+console.log("nostipedia.js loaded and executing.");
 
 // --- Configuration ---
 
@@ -23,16 +24,9 @@ let pool = [];
 let connected = false;
 let receivedEvents = {}; // Track received events per subscription
 
-// --- DOM Elements ---
-const searchInput = document.getElementById('search-input');
-const searchButton = document.getElementById('search-button');
-const connectLink = document.getElementById('connect-link');
-const settingsLink = document.getElementById('settings-link');
-const settingsModalBackdrop = document.getElementById('settings-modal-backdrop');
-const settingsCloseButton = document.getElementById('settings-close-button');
-const relayList = document.getElementById('relay-list');
-const addRelayInput = document.getElementById('add-relay-input');
-const addRelayButton = document.getElementById('add-relay-button');
+// --- DOM Elements (will be initialized on load) ---
+let searchInput, searchButton, connectLink, settingsLink, settingsModalBackdrop, 
+    settingsCloseButton, relayList, addRelayInput, addRelayButton;
 
 
 // --- NIP-19 Bech32 Decoding Utility ---
@@ -137,6 +131,7 @@ const bech32 = (() => {
  * @returns {string|null} The hex event ID or null if invalid.
  */
 function parseNostrIdentifier(identifier) {
+    if (!identifier) return null;
     identifier = identifier.trim();
 
     // Check if it's a raw hex ID
@@ -203,12 +198,18 @@ function connectToRelays() {
 
         console.log("Connecting to relays...", relays);
         if(connectLink) connectLink.textContent = "Connecting...";
+        
+        const errorDiv = document.getElementById('connection-error');
+        if(errorDiv) errorDiv.style.display = 'none'; // Hide previous errors
+
 
         if (relays.length === 0) {
             console.warn("No relays configured.");
             if(connectLink) connectLink.textContent = "No Relays";
             return resolve();
         }
+
+        let connectionFailed = false;
 
         relays.forEach(url => {
             try {
@@ -226,7 +227,10 @@ function connectToRelays() {
                     const [type, subId, data] = JSON.parse(event.data);
                     handleNostrEvent(type, subId, data);
                 };
-                relay.onerror = (error) => console.error(`Error with ${url}:`, error);
+                relay.onerror = (error) => {
+                    console.error(`Error with ${url}:`, error);
+                    connectionFailed = true;
+                };
                 relay.onclose = () => {
                     console.log(`Connection closed from ${url}`);
                     pool = pool.filter(r => r.url !== url);
@@ -237,9 +241,24 @@ function connectToRelays() {
                 };
             } catch (error) {
                 console.error(`Failed to connect to ${url}`, error);
+                connectionFailed = true;
             }
         });
-        setTimeout(() => resolve(), 3000); 
+
+        // After attempting connections, check if all failed, which likely indicates a blocker.
+        setTimeout(() => {
+            if (connectionFailed && pool.length === 0) {
+                if (errorDiv) {
+                    errorDiv.innerHTML = '<strong>Connection Failed.</strong> Could not connect to any relays. This is often caused by a browser extension (like an ad-blocker or Brave Shields) blocking the connection. Please try disabling it for this site.';
+                    errorDiv.style.display = 'block';
+                    if (connectLink) connectLink.textContent = "Connection Blocked";
+                }
+            }
+            // In any case, resolve the promise so the app doesn't hang.
+            if (!connected) {
+                resolve();
+            }
+        }, 2500);
     });
 }
 
@@ -253,7 +272,7 @@ function handleNostrEvent(type, subId, data) {
         }
         receivedEvents[subId]++;
 
-        console.log(`Received event for sub ${subId}:`, data);
+        // console.log(`Received event for sub ${subId}:`, data);
         if (subId === 'recent-articles') {
              renderArticlePreview(data, 'recent-articles-container');
         } else if (subId.startsWith('article-')) {
@@ -271,10 +290,10 @@ function handleNostrEvent(type, subId, data) {
         if (!receivedEvents[subId]) {
              if (subId === 'recent-articles') {
                 const container = document.getElementById('recent-articles-container');
-                if (container) container.innerHTML = '<p>No recent articles found on the connected relays.</p>';
+                if (container && container.querySelector('p')) container.innerHTML = '<p>No recent articles found on the connected relays.</p>';
             } else if (subId === 'search-results') {
                 const container = document.getElementById('search-results-container');
-                if (container) container.innerHTML = '<p>No articles found matching your search or category.</p>';
+                if (container && container.querySelector('p')) container.innerHTML = '<p>No articles found matching your search or category.</p>';
             }
         }
     }
@@ -302,6 +321,7 @@ function subscribe(filters, subId) {
  * Simple Markdown to HTML converter.
  */
 function simpleMarkdownToHtml(markdownText) {
+    if (!markdownText) return '';
     let html = markdownText
         .replace(/^### (.*$)/gim, '<h3>$1</h3>')
         .replace(/^## (.*$)/gim, '<h2>$1</h2>')
@@ -310,7 +330,7 @@ function simpleMarkdownToHtml(markdownText) {
         .replace(/\*(.*?)\*/g, '<em>$1</em>')
         .replace(/^\* (.*$)/gim, '<ul><li>$1</li></ul>')
         .replace(/<\/ul>\n<ul>/g, '')
-        .replace(/\[([^\]]+)]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+        .replace(/\[([^\]]+)]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
         .split('\n').map(p => p.trim() ? `<p>${p}</p>` : '').join('')
         .replace(/<p><h1>(.*?)<\/h1><\/p>/g, '<h1>$1</h1>')
         .replace(/<p><h2>(.*?)<\/h2><\/p>/g, '<h2>$1</h2>')
@@ -350,7 +370,7 @@ function renderArticlePreview(event, containerId) {
     
     // If this is the first event for this container, clear the "Loading..." message.
     if (receivedEvents['search-results'] === 1 || receivedEvents['recent-articles'] === 1) {
-       if (container.querySelector('p')) { // a bit brittle, assumes loading msg is a <p>
+       if (container.querySelector('p')) {
            container.innerHTML = '';
        }
     }
@@ -358,7 +378,7 @@ function renderArticlePreview(event, containerId) {
     const titleTag = event.tags.find(tag => tag[0] === 'd');
     const title = titleTag ? titleTag[1] : 'Untitled Article';
     const summaryTag = event.tags.find(tag => tag[0] === 'summary');
-    const summary = summaryTag ? summaryTag[1] : event.content.substring(0, 150) + '...';
+    const summary = summaryTag ? summaryTag[1] : (event.content || '').substring(0, 150) + '...';
     const articleLink = `/article.html?id=${event.id}`;
     const articleDiv = document.createElement('div');
     articleDiv.className = 'article-preview';
@@ -392,14 +412,15 @@ function renderArticleInPane(event, paneContentId) {
 
 function openSettingsModal() {
     populateRelayList();
-    settingsModalBackdrop.style.display = 'block';
+    if(settingsModalBackdrop) settingsModalBackdrop.style.display = 'flex';
 }
 
 function closeSettingsModal() {
-    settingsModalBackdrop.style.display = 'none';
+    if(settingsModalBackdrop) settingsModalBackdrop.style.display = 'none';
 }
 
 function populateRelayList() {
+    if (!relayList) return;
     relayList.innerHTML = '';
     relays.forEach((relayUrl, index) => {
         const li = document.createElement('li');
@@ -408,93 +429,92 @@ function populateRelayList() {
     });
 }
 
-// --- Event Listeners & Page Initialization ---
+// --- Initialization ---
 
-if (connectLink) {
-    connectLink.addEventListener('click', (e) => {
-        e.preventDefault();
-        connectToRelays();
-    });
+function initializeDOMElements() {
+    searchInput = document.getElementById('search-input');
+    searchButton = document.getElementById('search-button');
+    connectLink = document.getElementById('connect-link');
+    settingsLink = document.getElementById('settings-link');
+    settingsModalBackdrop = document.getElementById('settings-modal-backdrop');
+    settingsCloseButton = document.getElementById('settings-close-button');
+    relayList = document.getElementById('relay-list');
+    addRelayInput = document.getElementById('add-relay-input');
+    addRelayButton = document.getElementById('add-relay-button');
 }
 
-if (searchButton) {
-    searchButton.addEventListener('click', () => {
-        const query = searchInput.value;
-        if (query) {
-            window.location.href = `/search.html?q=${encodeURIComponent(query)}`;
-        }
-    });
-    searchInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            searchButton.click();
-        }
-    });
-}
-
-// Settings Modal Listeners
-settingsLink.addEventListener('click', openSettingsModal);
-settingsCloseButton.addEventListener('click', closeSettingsModal);
-settingsModalBackdrop.addEventListener('click', (e) => {
-    if (e.target === settingsModalBackdrop) {
-        closeSettingsModal();
+function attachEventListeners() {
+    if (searchButton) {
+        searchButton.addEventListener('click', () => {
+            const query = searchInput.value;
+            if (query) window.location.href = `/search.html?q=${encodeURIComponent(query)}`;
+        });
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') searchButton.click();
+        });
     }
-});
-addRelayButton.addEventListener('click', () => {
-    const newRelay = addRelayInput.value.trim();
-    if (newRelay && newRelay.startsWith('wss://')) {
-        if (!relays.includes(newRelay)) {
-            relays.push(newRelay);
+
+    if (connectLink) {
+        connectLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            connectToRelays();
+        });
+    }
+
+    if (settingsLink) settingsLink.addEventListener('click', openSettingsModal);
+    if (settingsCloseButton) settingsCloseButton.addEventListener('click', closeSettingsModal);
+    if (settingsModalBackdrop) settingsModalBackdrop.addEventListener('click', (e) => {
+        if (e.target === settingsModalBackdrop) closeSettingsModal();
+    });
+
+    if (addRelayButton) addRelayButton.addEventListener('click', () => {
+        const newRelay = addRelayInput.value.trim();
+        if (newRelay && newRelay.startsWith('wss://')) {
+            if (!relays.includes(newRelay)) {
+                relays.push(newRelay);
+                saveRelaysToStorage();
+                populateRelayList();
+            }
+            addRelayInput.value = '';
+        } else {
+            addRelayInput.value = '';
+            addRelayInput.placeholder = 'Invalid URL. Must start with wss://';
+        }
+    });
+
+    if(relayList) relayList.addEventListener('click', (e) => {
+        if (e.target.classList.contains('remove-relay')) {
+            const indexToRemove = parseInt(e.target.dataset.index, 10);
+            relays.splice(indexToRemove, 1);
             saveRelaysToStorage();
             populateRelayList();
         }
-        addRelayInput.value = '';
-    } else {
-        addRelayInput.value = '';
-        addRelayInput.placeholder = 'Invalid URL. Must start with wss://';
-    }
-});
-relayList.addEventListener('click', (e) => {
-    if (e.target.classList.contains('remove-relay')) {
-        const indexToRemove = parseInt(e.target.dataset.index, 10);
-        relays.splice(indexToRemove, 1);
-        saveRelaysToStorage();
-        populateRelayList();
-    }
-});
-
-// Category Link Listener
-const categoriesContainer = document.getElementById('categories-container');
-if (categoriesContainer) {
-    categoriesContainer.addEventListener('click', (e) => {
-        e.preventDefault();
-        const link = e.target.closest('.category-link');
-        if (link) {
-            const category = link.dataset.category;
-            window.location.href = `/search.html?category=${encodeURIComponent(category)}`;
-        }
     });
+
+    const categoriesContainer = document.getElementById('categories-container');
+    if (categoriesContainer) {
+        categoriesContainer.addEventListener('click', (e) => {
+            e.preventDefault();
+            const link = e.target.closest('.category-link');
+            if (link) {
+                const category = link.dataset.category;
+                window.location.href = `/search.html?category=${encodeURIComponent(category)}`;
+            }
+        });
+    }
 }
 
-
 // --- Router: Initialize page based on URL ---
-window.addEventListener('load', async () => {
-    loadRelaysFromStorage();
-    await connectToRelays();
-    
+async function main() {
     const path = window.location.pathname;
     const params = new URLSearchParams(window.location.search);
 
-    if (path.endsWith('/') || path.endsWith('/index.html')) {
-        fetchRecentArticles();
-    } else if (path.endsWith('/recent.html')) {
+    if (path.endsWith('/') || path.endsWith('/index.html') || path.endsWith('/recent.html')) {
         fetchRecentArticles();
     } else if (path.endsWith('/article.html')) {
         const articleId = params.get('id');
-        if (articleId) {
-            fetchArticle(articleId);
-        } else {
-            document.getElementById('content').innerHTML = '<h1>Error: No article ID provided.</h1>';
-        }
+        if (articleId) fetchArticle(articleId);
+        else document.getElementById('content').innerHTML = '<h1>Error: No article ID provided.</h1>';
     } else if (path.endsWith('/search.html')) {
         const query = params.get('q');
         const category = params.get('category');
@@ -502,25 +522,44 @@ window.addEventListener('load', async () => {
         const queryDisplayEl = document.getElementById('search-query-display');
 
         if (category) {
-            titleEl.textContent = `Category: ${category}`;
-            queryDisplayEl.textContent = category;
+            if(titleEl) titleEl.textContent = `Category: ${category}`;
+            if(queryDisplayEl) queryDisplayEl.textContent = category;
             fetchArticlesByCategory(category);
         } else if (query) {
-            titleEl.textContent = 'Search Results';
-            queryDisplayEl.textContent = query;
+            if(titleEl) titleEl.textContent = 'Search Results';
+            if(queryDisplayEl) queryDisplayEl.textContent = query;
             searchArticles(query);
         }
     } else if (path.endsWith('/compare.html')) {
         const inputPane1 = document.getElementById('input-pane-1');
         const inputPane2 = document.getElementById('input-pane-2');
-        document.getElementById('load-pane-1').addEventListener('click', () => {
-            const eventId = inputPane1.value;
-            if (eventId) fetchArticleForPane(eventId, 'pane-1', inputPane1);
+        const loadPane1 = document.getElementById('load-pane-1');
+        const loadPane2 = document.getElementById('load-pane-2');
+
+        if(loadPane1) loadPane1.addEventListener('click', () => {
+            if (inputPane1.value) fetchArticleForPane(inputPane1.value, 'pane-1', inputPane1);
         });
-        document.getElementById('load-pane-2').addEventListener('click', () => {
-            const eventId = inputPane2.value;
-            if (eventId) fetchArticleForPane(eventId, 'pane-2', inputPane2);
+        if(loadPane2) loadPane2.addEventListener('click', () => {
+            if (inputPane2.value) fetchArticleForPane(inputPane2.value, 'pane-2', inputPane2);
         });
+    }
+}
+
+window.addEventListener('load', async () => {
+    console.log("Window 'load' event fired. Initializing app.");
+    try {
+        initializeDOMElements();
+        attachEventListeners();
+        loadRelaysFromStorage();
+        await connectToRelays();
+        await main();
+    } catch (e) {
+        console.error("A critical error occurred during app initialization:", e);
+        const errorDiv = document.getElementById('connection-error');
+        if (errorDiv) {
+            errorDiv.innerHTML = '<strong>A critical error occurred.</strong> The application could not start. Please check the console for details.';
+            errorDiv.style.display = 'block';
+        }
     }
 });
 
