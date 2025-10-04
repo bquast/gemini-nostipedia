@@ -1,0 +1,48 @@
+<h1 id="page-title">Welcome to Nostipedia</h1>
+<p>The free encyclopedia on Nostr that anyone can edit (sort of).</p>
+
+<h2>Categories</h2>
+<div id="categories-container">
+    <!-- Categories will be loaded here dynamically -->
+</div>
+
+<h2>Recently Modified Articles</h2>
+<div id="recent-articles-container">
+    <!-- Recent articles will be loaded here -->
+</div>
+
+<style>
+    #categories-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5em;
+        margin-bottom: 2em;
+    }
+    .category-tag {
+        display: inline-block;
+        padding: 0.3em 0.8em;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background-color: var(--sidebar-bg);
+        text-decoration: none;
+        color: var(--text-color);
+        font-size: 0.9em;
+    }
+    .category-tag:hover {
+        background-color: #e9ecef;
+    }
+</style>
+
+<script>
+    // Mock data for now
+    const categories = ["Nostr", "People", "Knowledge", "Wiki redirect", "Philosophy", "Religion", "Corruption", "Technology", "Internet", "Linguistics", "cryptocurrency", "History", "Mathematics", "Stub", "Literature", "Places", "Music", "Life"];
+    
+    const categoriesContainer = document.getElementById('categories-container');
+    categories.forEach(cat => {
+        const a = document.createElement('a');
+        a.href = `/category/${cat.toLowerCase().replace(' ', '-')}`;
+        a.className = 'category-tag';
+        a.textContent = cat;
+        categoriesContainer.appendChild(a);
+    });
+</script>
