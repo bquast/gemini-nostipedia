@@ -21,6 +21,7 @@ const ARTICLE_KIND = 30818; // NIP-54: Wikipedia-style article
 let relays = [];
 let pool = [];
 let connected = false;
+let receivedEvents = {}; // Track received events per subscription
 
 // --- DOM Elements ---
 const searchInput = document.getElementById('search-input');
@@ -32,6 +33,143 @@ const settingsCloseButton = document.getElementById('settings-close-button');
 const relayList = document.getElementById('relay-list');
 const addRelayInput = document.getElementById('add-relay-input');
 const addRelayButton = document.getElementById('add-relay-button');
+
+
+// --- NIP-19 Bech32 Decoding Utility ---
+// A minimal bech32 decoder function to avoid external dependencies.
+// Based on the BIP173 reference implementation.
+const bech32 = (() => {
+    const ALPHABET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+    const ALPHABET_MAP = {};
+    for (let z = 0; z < ALPHABET.length; z++) {
+        const x = ALPHABET.charAt(z);
+        ALPHABET_MAP[x] = z;
+    }
+    function polymod(values) {
+        const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+        let chk = 1;
+        for (let p = 0; p < values.length; ++p) {
+            const top = chk >> 25;
+            chk = (chk & 0x1ffffff) << 5 ^ values[p];
+            for (let i = 0; i < 5; ++i) {
+                if ((top >> i) & 1) {
+                    chk ^= GEN[i];
+                }
+            }
+        }
+        return chk;
+    }
+    function HRPExpand(hrp) {
+        const ret = [];
+        let p;
+        for (p = 0; p < hrp.length; ++p) {
+            ret.push(hrp.charCodeAt(p) >> 5);
+        }
+        ret.push(0);
+        for (p = 0; p < hrp.length; ++p) {
+            ret.push(hrp.charCodeAt(p) & 31);
+        }
+        return ret;
+    }
+    function verifyChecksum(hrp, data) {
+        return polymod(HRPExpand(hrp).concat(data)) === 1;
+    }
+    function fromWords(words) {
+        const BITS_PER_BYTE = 8;
+        const BITS_PER_WORD = 5;
+        let res = '';
+        let bits = 0;
+        let value = 0;
+        for(let i=0; i<words.length; ++i) {
+            value = (value << BITS_PER_WORD) | words[i];
+            bits += BITS_PER_WORD;
+            while(bits >= BITS_PER_BYTE) {
+                bits -= BITS_PER_BYTE;
+                const b = (value >> bits) & 255;
+                res += String.fromCharCode(b);
+            }
+        }
+        return res;
+    }
+    function decode(str) {
+        let p;
+        let hasLower = false;
+        let hasUpper = false;
+        for (p = 0; p < str.length; ++p) {
+            if (str.charCodeAt(p) < 33 || str.charCodeAt(p) > 126) {
+                return null;
+            }
+            if (str.charCodeAt(p) >= 97 && str.charCodeAt(p) <= 122) {
+                hasLower = true;
+            }
+            if (str.charCodeAt(p) >= 65 && str.charCodeAt(p) <= 90) {
+                hasUpper = true;
+            }
+        }
+        if (hasLower && hasUpper) {
+            return null;
+        }
+        str = str.toLowerCase();
+        const pos = str.lastIndexOf('1');
+        if (pos < 1 || pos + 7 > str.length || str.length > 90) {
+            return null;
+        }
+        const hrp = str.substring(0, pos);
+        const data = [];
+        for (p = pos + 1; p < str.length; ++p) {
+            const d = ALPHABET_MAP[str.charAt(p)];
+            if (d === undefined) {
+                return null;
+            }
+            data.push(d);
+        }
+        if (!verifyChecksum(hrp, data)) {
+            return null;
+        }
+        return { hrp: hrp, words: data.slice(0, data.length - 6) };
+    }
+    return { decode };
+})();
+
+/**
+ * Parses a Nostr identifier (hex, note1, nevent1) and returns the event ID.
+ * @param {string} identifier The string to parse.
+ * @returns {string|null} The hex event ID or null if invalid.
+ */
+function parseNostrIdentifier(identifier) {
+    identifier = identifier.trim();
+
+    // Check if it's a raw hex ID
+    if (/^[a-f0-9]{64}$/.test(identifier)) {
+        return identifier;
+    }
+
+    // Check for bech32 format (note1, nevent1)
+    if (identifier.startsWith('note1') || identifier.startsWith('nevent1')) {
+        try {
+            const decoded = bech32.decode(identifier);
+            if (!decoded) return null;
+
+            const data = new Uint8Array(decoded.words.map(w => w));
+            
+            if (decoded.hrp === 'nevent') {
+                 // In nevent, the first TLV entry is the event ID (32 bytes)
+                 const idBytes = data.slice(2, 34); // Skip type and length bytes
+                 const idHex = Array.from(idBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+                 return idHex;
+            } else if (decoded.hrp === 'note') {
+                const idBytes = data.slice(0, 32);
+                return Array.from(idBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+            }
+            
+        } catch (e) {
+            console.error("Error decoding bech32 string:", e);
+            return null;
+        }
+    }
+
+    return null;
+}
 
 
 // --- Settings & Local Storage ---
@@ -55,7 +193,6 @@ function saveRelaysToStorage() {
  * Connects to the configured Nostr relays.
  */
 function connectToRelays() {
-    // ... existing connectToRelays function ...
     return new Promise((resolve) => {
         if (connected) {
             console.log("Disconnecting from old relays first...");
@@ -110,8 +247,12 @@ function connectToRelays() {
  * Handles incoming events from relays.
  */
 function handleNostrEvent(type, subId, data) {
-    // ... existing handleNostrEvent function ...
     if (type === 'EVENT') {
+        if (!receivedEvents[subId]) {
+            receivedEvents[subId] = 0;
+        }
+        receivedEvents[subId]++;
+
         console.log(`Received event for sub ${subId}:`, data);
         if (subId === 'recent-articles') {
              renderArticlePreview(data, 'recent-articles-container');
@@ -124,6 +265,18 @@ function handleNostrEvent(type, subId, data) {
         } else if (subId.startsWith('compare-pane-2-')) {
             renderArticleInPane(data, 'pane-2-content');
         }
+    } else if (type === 'EOSE') {
+        console.log(`Received EOSE for sub ${subId}`);
+        // If a subscription ends and we haven't received any events for it, update the UI.
+        if (!receivedEvents[subId]) {
+             if (subId === 'recent-articles') {
+                const container = document.getElementById('recent-articles-container');
+                if (container) container.innerHTML = '<p>No recent articles found on the connected relays.</p>';
+            } else if (subId === 'search-results') {
+                const container = document.getElementById('search-results-container');
+                if (container) container.innerHTML = '<p>No articles found matching your search.</p>';
+            }
+        }
     }
 }
 
@@ -131,11 +284,12 @@ function handleNostrEvent(type, subId, data) {
  * Subscribes to a set of filters on all connected relays.
  */
 function subscribe(filters, subId) {
-    // ... existing subscribe function ...
     if (!connected) {
         console.warn("Not connected to relays. Cannot subscribe.");
         return;
     }
+    // Reset the event counter for this subscription
+    receivedEvents[subId] = 0;
     const req = ["REQ", subId, filters];
     console.log("Sending subscription:", req);
     pool.forEach(relay => {
@@ -148,7 +302,6 @@ function subscribe(filters, subId) {
  * Simple Markdown to HTML converter.
  */
 function simpleMarkdownToHtml(markdownText) {
-    // ... existing simpleMarkdownToHtml function ...
     let html = markdownText
         .replace(/^### (.*$)/gim, '<h3>$1</h3>')
         .replace(/^## (.*$)/gim, '<h2>$1</h2>')
@@ -168,14 +321,37 @@ function simpleMarkdownToHtml(markdownText) {
 }
 
 // --- Page-specific Logic ---
-// ... existing functions: fetchRecentArticles, fetchArticle, etc. ...
 function fetchRecentArticles() { subscribe({ kinds: [ARTICLE_KIND], limit: 10 }, 'recent-articles'); }
-function fetchArticle(eventId) { subscribe({ ids: [eventId], kinds: [ARTICLE_KIND], limit: 1 }, `article-${eventId}`); }
+function fetchArticle(eventId) { 
+    const hexId = parseNostrIdentifier(eventId);
+    if (!hexId) {
+         console.error("Invalid Nostr identifier provided:", eventId);
+         document.getElementById('content').innerHTML = `<h1>Error: Invalid article ID format.</h1><p>Please use a valid hex, note1, or nevent1 identifier.</p>`;
+         return;
+    }
+    subscribe({ ids: [hexId], kinds: [ARTICLE_KIND], limit: 1 }, `article-${hexId}`); 
+}
 function searchArticles(query) { subscribe({ kinds: [ARTICLE_KIND], search: query, limit: 20 }, 'search-results'); }
-function fetchArticleForPane(eventId, paneId) { const subId = `compare-${paneId}-${eventId}`; subscribe({ ids: [eventId], kinds: [ARTICLE_KIND], limit: 1 }, subId); }
+function fetchArticleForPane(eventId, paneId, inputElement) { 
+    const hexId = parseNostrIdentifier(eventId);
+    if (!hexId) {
+        console.error("Invalid Nostr identifier for pane:", eventId);
+        inputElement.value = '';
+        inputElement.placeholder = 'Invalid ID. Try again.';
+        return;
+    }
+    const subId = `compare-${paneId}-${hexId}`; 
+    subscribe({ ids: [hexId], kinds: [ARTICLE_KIND], limit: 1 }, subId); 
+}
 function renderArticlePreview(event, containerId) {
     const container = document.getElementById(containerId);
     if (!container) return;
+    
+    // If this is the first event for this container, clear the "Loading..." message.
+    if (receivedEvents[containerId.replace('-container','s')] === 1) {
+        container.innerHTML = '';
+    }
+
     const titleTag = event.tags.find(tag => tag[0] === 'd');
     const title = titleTag ? titleTag[1] : 'Untitled Article';
     const summaryTag = event.tags.find(tag => tag[0] === 'summary');
@@ -239,7 +415,6 @@ if (connectLink) {
 }
 
 if (searchButton) {
-    // ... existing search listeners ...
     searchButton.addEventListener('click', () => {
         const query = searchInput.value;
         if (query) {
@@ -271,7 +446,8 @@ addRelayButton.addEventListener('click', () => {
         }
         addRelayInput.value = '';
     } else {
-        alert("Please enter a valid relay URL starting with wss://");
+        addRelayInput.value = '';
+        addRelayInput.placeholder = 'Invalid URL. Must start with wss://';
     }
 });
 relayList.addEventListener('click', (e) => {
@@ -310,13 +486,15 @@ window.addEventListener('load', async () => {
             searchArticles(query);
         }
     } else if (path.endsWith('/compare.html')) {
+        const inputPane1 = document.getElementById('input-pane-1');
+        const inputPane2 = document.getElementById('input-pane-2');
         document.getElementById('load-pane-1').addEventListener('click', () => {
-            const eventId = document.getElementById('input-pane-1').value;
-            if (eventId) fetchArticleForPane(eventId, 'pane-1');
+            const eventId = inputPane1.value;
+            if (eventId) fetchArticleForPane(eventId, 'pane-1', inputPane1);
         });
         document.getElementById('load-pane-2').addEventListener('click', () => {
-            const eventId = document.getElementById('input-pane-2').value;
-            if (eventId) fetchArticleForPane(eventId, 'pane-2');
+            const eventId = inputPane2.value;
+            if (eventId) fetchArticleForPane(eventId, 'pane-2', inputPane2);
         });
     }
 });

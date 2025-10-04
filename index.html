@@ -1,48 +1,69 @@
-<h1 id="page-title">Welcome to Nostipedia</h1>
+<h1>Welcome to Nostipedia</h1>
 <p>The free encyclopedia on Nostr that anyone can edit (sort of).</p>
 
 <h2>Categories</h2>
-<div id="categories-container">
-    <!-- Categories will be loaded here dynamically -->
+<div class="categories">
+    <!-- These are placeholders. We can make them functional later. -->
+    <a href="#">Nostr</a>
+    <a href="#">People</a>
+    <a href="#">Knowledge</a>
+    <a href="#">Wiki redirect</a>
+    <a href="#">Philosophy</a>
+    <a href="#">Religion</a>
+    <a href="#">Corruption</a>
+    <a href="#">Technology</a>
+    <a href="#">Internet</a>
+    <a href="#">Linguistics</a>
+    <a href="#">cryptocurrency</a>
+    <a href="#">History</a>
+    <a href="#">Mathematics</a>
+    <a href="#">Stub</a>
+    <a href="#">Literature</a>
+    <a href="#">Places</a>
+    <a href="#">Music</a>
+    <a href="#">Life</a>
 </div>
 
 <h2>Recently Modified Articles</h2>
 <div id="recent-articles-container">
-    <!-- Recent articles will be loaded here -->
+    <p>Loading recent articles from relays...</p>
 </div>
 
 <style>
-    #categories-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5em;
-        margin-bottom: 2em;
-    }
-    .category-tag {
-        display: inline-block;
-        padding: 0.3em 0.8em;
-        border: 1px solid var(--border-color);
-        border-radius: 4px;
-        background-color: var(--sidebar-bg);
-        text-decoration: none;
-        color: var(--text-color);
-        font-size: 0.9em;
-    }
-    .category-tag:hover {
-        background-color: #e9ecef;
-    }
+.categories a {
+    display: inline-block;
+    padding: 5px 10px;
+    border: 1px solid var(--border-color);
+    margin: 5px;
+    cursor: pointer;
+    background-color: #f8f9fa;
+    text-decoration: none;
+    color: var(--link-color);
+    border-radius: 4px;
+}
+.categories a:hover {
+    background-color: #e9ecef;
+    border-color: #a2a9b1;
+}
+
+#recent-articles-container .article-preview h3 {
+    margin-top: 0;
+    margin-bottom: 0.5em;
+}
+
+#recent-articles-container .article-preview p {
+    margin-top: 0;
+}
+
+#recent-articles-container .article-preview small {
+    color: #555;
+    font-size: 0.8em;
+}
+
+#recent-articles-container hr {
+    border: none;
+    border-top: 1px solid #eee;
+    margin: 1.5em 0;
+}
 </style>
 
-<script>
-    // Mock data for now
-    const categories = ["Nostr", "People", "Knowledge", "Wiki redirect", "Philosophy", "Religion", "Corruption", "Technology", "Internet", "Linguistics", "cryptocurrency", "History", "Mathematics", "Stub", "Literature", "Places", "Music", "Life"];
-    
-    const categoriesContainer = document.getElementById('categories-container');
-    categories.forEach(cat => {
-        const a = document.createElement('a');
-        a.href = `/category/${cat.toLowerCase().replace(' ', '-')}`;
-        a.className = 'category-tag';
-        a.textContent = cat;
-        categoriesContainer.appendChild(a);
-    });
-</script>
