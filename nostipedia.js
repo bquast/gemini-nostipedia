@@ -274,7 +274,7 @@ function handleNostrEvent(type, subId, data) {
                 if (container) container.innerHTML = '<p>No recent articles found on the connected relays.</p>';
             } else if (subId === 'search-results') {
                 const container = document.getElementById('search-results-container');
-                if (container) container.innerHTML = '<p>No articles found matching your search.</p>';
+                if (container) container.innerHTML = '<p>No articles found matching your search or category.</p>';
             }
         }
     }
@@ -332,6 +332,7 @@ function fetchArticle(eventId) {
     subscribe({ ids: [hexId], kinds: [ARTICLE_KIND], limit: 1 }, `article-${hexId}`); 
 }
 function searchArticles(query) { subscribe({ kinds: [ARTICLE_KIND], search: query, limit: 20 }, 'search-results'); }
+function fetchArticlesByCategory(category) { subscribe({ kinds: [ARTICLE_KIND], '#t': [category], limit: 20 }, 'search-results'); }
 function fetchArticleForPane(eventId, paneId, inputElement) { 
     const hexId = parseNostrIdentifier(eventId);
     if (!hexId) {
@@ -348,8 +349,10 @@ function renderArticlePreview(event, containerId) {
     if (!container) return;
     
     // If this is the first event for this container, clear the "Loading..." message.
-    if (receivedEvents[containerId.replace('-container','s')] === 1) {
-        container.innerHTML = '';
+    if (receivedEvents['search-results'] === 1 || receivedEvents['recent-articles'] === 1) {
+       if (container.querySelector('p')) { // a bit brittle, assumes loading msg is a <p>
+           container.innerHTML = '';
+       }
     }
 
     const titleTag = event.tags.find(tag => tag[0] === 'd');
@@ -459,6 +462,19 @@ relayList.addEventListener('click', (e) => {
     }
 });
 
+// Category Link Listener
+const categoriesContainer = document.getElementById('categories-container');
+if (categoriesContainer) {
+    categoriesContainer.addEventListener('click', (e) => {
+        e.preventDefault();
+        const link = e.target.closest('.category-link');
+        if (link) {
+            const category = link.dataset.category;
+            window.location.href = `/search.html?category=${encodeURIComponent(category)}`;
+        }
+    });
+}
+
 
 // --- Router: Initialize page based on URL ---
 window.addEventListener('load', async () => {
@@ -481,8 +497,17 @@ window.addEventListener('load', async () => {
         }
     } else if (path.endsWith('/search.html')) {
         const query = params.get('q');
-        document.getElementById('search-query-display').textContent = query;
-        if(query) {
+        const category = params.get('category');
+        const titleEl = document.getElementById('search-results-title');
+        const queryDisplayEl = document.getElementById('search-query-display');
+
+        if (category) {
+            titleEl.textContent = `Category: ${category}`;
+            queryDisplayEl.textContent = category;
+            fetchArticlesByCategory(category);
+        } else if (query) {
+            titleEl.textContent = 'Search Results';
+            queryDisplayEl.textContent = query;
             searchArticles(query);
         }
     } else if (path.endsWith('/compare.html')) {

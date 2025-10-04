@@ -1,6 +1,27 @@
-<h1>Search results</h1>
-<p>Results for: <strong id="search-query-display"></strong></p>
-
+<h1 id="search-results-title">Search Results</h1>
+<p>Showing articles for: <strong id="search-query-display"></strong></p>
 <div id="search-results-container">
-    <!-- Search results will be loaded here -->
+    <p>Loading results from relays...</p>
 </div>
+<style>
+#search-results-container .article-preview h3 {
+    margin-top: 0;
+    margin-bottom: 0.5em;
+}
+
+#search-results-container .article-preview p {
+    margin-top: 0;
+}
+
+#search-results-container .article-preview small {
+    color: #555;
+    font-size: 0.8em;
+}
+
+#search-results-container hr {
+    border: none;
+    border-top: 1px solid #eee;
+    margin: 1.5em 0;
+}
+</style>
+
